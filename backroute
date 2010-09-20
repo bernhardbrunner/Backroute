@@ -1,0 +1,124 @@
+#! /bin/bash
+# backroute: 	Script to dynamically switch over to a backup router, should
+# 		the primary router fail
+# Version 1.0	Bernhard Brunner, 1.1.2003
+#	  1.1	Bernhard Brunner, 2.10.2003. mail config switching added
+#
+# Licensed under the GPL License
+
+# Configuration variables
+# #######################
+# Empty MAILTO prevents spurious mails (this normally runs as a cron job)
+MAILTO=" "
+
+# statefile. this contains shell variables, it is sourced by the script
+statefile=/var/run/backroute.stat
+
+# address of first upstream router. Use traceroute to check out
+# tip: put an entry into hosts file
+upstream=lemon
+
+# LAN side IP address of your fast router
+fastrouter=zerberus
+
+# LAN side IP address of your backup router
+backrouter=zitrus
+
+# logfile where up/down events are logged. 
+# tipp: give this to your isp support person, to put him/her out of
+# 	"dummy reject mode" ;-)
+fastlog=/var/log/fastfail
+
+# tail of fastlog, useful for things like background info
+# tipp: i use the "bginfo" tool to put this on my windows desktop! 
+fastlogtail=/var/log/routerstatus
+
+# where up/down events are mailed, empty for no mail notifications
+mailto=
+
+# system services that should run only when high speed router is up
+# use this, if you want to prevent services like ntp from keeping
+# an isdn line open most of the time
+# add a list of scripts from /etc/init.d here, that you would
+# like to called with start/stop argument
+fastservices=xntpd 
+
+# full path to route command
+routebin=/sbin/route
+
+##END OF CONFIGURATION#############################################
+
+# load variables from statefile:
+# FASTDOWN=0|1
+dirty=0
+FASTDOWN=0
+mailto=root
+
+if [ -e $statefile ] ; then
+    . $statefile
+else
+    dirty=1
+fi
+
+# 1 ping to upstream router with a quite long timeout
+if ! ping -w 20 -c1 $upstream > /dev/null ; then
+  if [ $FASTDOWN == 0 ] ; then
+    # fast link went down
+    date +"down %D %T" >> $fastlog
+    tail -3 $fastlog > $fastlogtail
+
+    # notify
+    if [ -n $mailto ] ; then
+      echo "ADSL Router offline,switching to ISDN" | mail -s "BACKROUTE: ADSL offline" $mailto
+    fi
+    
+    # activate backup router
+    $routebin del default gw $fastrouter
+    $routebin add default gw $backrouter
+
+    # stop internet intensive services like e.g. ntp
+    for s in $fastservices ; do 
+	/etc/init.d/$s stop > /dev/null
+    done
+
+    # hack: switch postfix config and reload, needed for relay host
+    # cp /etc/postfix/main.cf.backup /etc/postfix/main.cf
+    # rcpostfix reload
+    
+    FASTDOWN=1
+    dirty=1
+  fi
+  
+else
+  # fastrouter reachable
+  if [ $FASTDOWN == 1 ] ; then
+    # fast link came back
+    date +"up   %D %T" >> $fastlog
+    tail -3 $fastlog > $fastlogtail
+
+    # notify
+    if [ -n $mailto ] ; then
+      echo "ADSL Router back online, switching to ADSL" | mail -s "BACKROUTE: ADSL online" $mailto
+    fi
+    
+    # reactivate fast router
+    $routebin del default gw $backrouter
+    $routebin add default gw $fastrouter
+
+    # reactivate internet intensive services like ntp
+    for s in $fastservices ; do 
+	/etc/init.d/$s start > /dev/null
+    done
+
+    # hack: switch postfix config and reload, needed for relay host
+    # cp /etc/postfix/main.cf.fast /etc/postfix/main.cf
+    # rcpostfix reload
+    
+    FASTDOWN=0
+    dirty=1
+  fi    
+fi 
+
+if [ $dirty == 1 ] ; then
+  echo FASTDOWN=$FASTDOWN > $statefile
+fi
