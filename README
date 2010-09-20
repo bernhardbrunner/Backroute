@@ -1,0 +1,109 @@
+Backroute
+=========
+
+Backroute is a lightweight shell script, that monitors a primary router, and
+switches to a backup router and back as the primary router comes back online.
+Backroute is for you, if you want to have automatic router failover to a backup
+router, but want to avoid the complexities of dynamic routing daemons.
+
+Typical usage scenario:
+
+* you have a new, fast (ADSL oder cable) internet connection, which sometimes
+  may fail.
+* you have a backup internet connection (ISDN or even modem), which is not used
+  anymore.
+* you have a linux server, which handles things like dhcp, smb filesharing, www
+  proxy, etc.
+
+Principle of operation:
+
+* The linux server is entered as the default gateway of all clients. Since the
+  linux server adapts it's routing automatically, clients will no longer notice
+  when the fast router goes offline.
+* Automatic changing of the linux server's routing table:
+  o a static route to the next upstream router is entered into route.conf.
+  o backroute shell script is called regulary as a cron job and:
+    it checks the next upstream router
+    + if upstream router fails, the routing table is changed to switch to
+      default route to the backup router
+    + if upstream router is back online, the routing table is changed to the
+      fast router
+
+Download
+
+Version 1.1: backroute.tar
+
+Backroute is licensed under GPL. Also check out the project page at
+www.freshmeat.net
+
+
+Installation:
+
+* Copy copy backroute.sh to a directory of you choice, e.g. /usr/local/sbin.
+* Enter a static route to the next upstream router of your ISP into
+  the routing table (e.g. /etc/route.conf). 
+  Use the traceroute command to find out the next router's
+  "upstream" IP address. Your routing table should look something like this
+   (212.254.x.y is my next upstream router, my backup router is 192.168.1.1)
+
+   andromeda:~/tools # route -n
+   Kernel IP Routentabelle
+   Ziel          Router        Genmask         Flags Metric
+   212.254.x.y   192.168.1.253 255.255.255.255 UGH 0 0 0 eth0
+   192.168.1.0   0.0.0.0       255.255.255.0   U 0 0 0 eth0
+   0.0.0.0       192.168.1.1   0.0.0.0         UG 0 0 0 eth0
+    
+
+* Configuration of backroute.sh is via constant defintions in backroute.sh.
+  o Enter "upstream" IP adress in backroute.sh (212.254.x.y in my example)
+  o Enter the ip address of your fast router as "fastrouter" in backroute.sh. 
+    A default route to $fastrouter will be set, if $upstream is reachable.
+  o Enter the ip address of your backup router "backrouter" in backroute.sh. 
+    A default route to $backrouter will be set, if $upstream is not reachable.
+  o When a $upstream changes state, a log entry will be written to the textfile
+    $fastlog. Also, a mail will be sent to mail address $mailto
+  o I prefer to enter all numerical IP's in the hosts table. Because of this,
+    only hostnames apear in my script, no numerical adresses.
+
+* Test your backroute.sh by calling it on the command line. If your $upstream is
+  down, it will delay 5 seconds, then write an entry to $fastlog. Check your
+  routing table using route -n.
+
+* Create a cron job file /etc/cron.d/backroute, that is called frequently (once
+  a minute in my case). The tarfile contains an example for this. 
+
+  >>CUT
+  0-59/1 * * * * root /usr/local/sbin//backroute &
+  >>CUT
+
+* Once everything is running, you should do the following to allow all clients
+  to profit from high-availability routing:
+  o Enable IP forwarding (see your system manual for how to turn this on)
+  o Set to default gateway of all your clients to your linux box. The best way
+    is of course via dhcp.
+
+Caveats:
+========
+
+* As you switch routers, your clients may experience problems when sending mail,
+  This is because your ISP's smtp server will not accept mail if you come from an
+  "alien" IP.
+
+Fix: since a mailserver (postfix in my case) is already running on your linux
+box, just set it to relay mails of your local clients. Your linux box will then
+deliver all mail to the right isp smarthost. I recommend this because you will run 
+into problems if you run full mailserver without smarthost from a dialin ip (certain
+mailservers will simply drop all mail from dialin ips!). If you have two different
+isp's on the two routers, you may have to switch mailserver configs and restart your
+mailserver. Version 1.1 has support for this, however having 3 config files is 
+certainly not very pretty. On the other hand, i didn't want my script edit
+foreign config files, and possibly mess them up. So my solution is to have two
+versions of the mailserver config files with different smarthosts, and copy them 
+to the active config file. Afterwards, the mailserver is reloaded so that the 
+new config takes effect. This runs nicely at my site. But be shure to change the
+right config files!
+
+
+Comments
+
+Please, send in any bugs or comments to backroute@epr.ch
